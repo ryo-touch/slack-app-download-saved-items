@@ -11,11 +11,12 @@ Slackチャンネル履歴エクスポートツールの技術コンテキスト
 
 ## 機能
 
-- チャンネル履歴をMarkdownまたはCSV形式でエクスポート
+- チャンネル履歴をYAML、Markdown、CSV形式でエクスポート
 - スレッド展開（返信をインライン表示）
 - 日付範囲フィルタリング
 - ユーザー名解決
 - チャンネル名解決
+- チャンネル/ユーザーキャッシュによるrate limit回避
 
 ## ディレクトリ構造
 
@@ -25,6 +26,9 @@ history-export/
 │   ├── index.ts          # CLIエントリポイント
 │   └── exporter.ts       # HistoryExporterクラス
 ├── exports/              # 出力先（gitignore対象）
+├── .cache/               # キャッシュ（gitignore対象）
+│   ├── channels.json     # チャンネル名→ID
+│   └── users.json        # ユーザーID→表示名
 ├── dist/                 # コンパイル済みJavaScript
 ├── package.json
 ├── tsconfig.json
@@ -36,7 +40,7 @@ history-export/
 
 ### HistoryExporterクラス (src/exporter.ts)
 
-**コンストラクタ:** `new HistoryExporter(token: string)`
+**コンストラクタ:** `new HistoryExporter(token: string, cacheDir?: string)`
 
 **メインメソッド:** `export(options: ExportOptions): Promise<ExportResult>`
 
@@ -46,28 +50,34 @@ interface ExportOptions {
   channelId: string;      // チャンネルIDまたは名前
   startDate?: Date;       // 開始日（任意）
   endDate?: Date;         // 終了日（任意）
-  format: 'csv' | 'markdown';
+  format: 'csv' | 'markdown' | 'yaml';
   outputDir: string;
 }
 ```
 
 **主要メソッド:**
+- `listChannels()` - チャンネル一覧取得（ファイルキャッシュ対応）
+- `prefetchUsersToCache()` - ユーザー一覧を事前取得（ファイルキャッシュ対応）
 - `fetchHistory()` - ページネーションでチャンネルメッセージ取得
 - `fetchThreadReplies()` - スレッド返信を展開
-- `resolveChannelId()` - チャンネル名をIDに変換
+- `resolveChannelId()` - チャンネル名をIDに変換（キャッシュ対応）
 - `getUserName()` - ユーザーIDを表示名に解決（キャッシュ付き）
 - `getChannelName()` - チャンネルIDを名前に解決（キャッシュ付き）
 - `formatAsMarkdown()` - Markdown出力生成
 - `formatAsCsv()` - CSV出力生成
+- `formatAsYaml()` - YAML出力生成
 
 ### CLIエントリポイント (src/index.ts)
 
 **引数:**
-- `--channel <name|id>` - エクスポート対象チャンネル（必須）
+- `--channel <name|id>` - エクスポート対象チャンネル（**ID推奨**、rate limit回避）
 - `--from <YYYY-MM-DD>` - 開始日（任意）
 - `--to <YYYY-MM-DD>` - 終了日（任意）
-- `--format <csv|md>` - 出力形式（デフォルト: md）
+- `--format <yaml|csv|md>` - 出力形式（デフォルト: yaml）
 - `--output <dir>` - 出力先ディレクトリ（デフォルト: exports/）
+- `--list-channels` - チャンネル一覧を表示してキャッシュに保存
+- `--prefetch-users` - ユーザー一覧を事前取得してキャッシュに保存
+- `--refresh-cache` - キャッシュを強制更新
 
 ## 必要なSlackスコープ (User Token)
 
@@ -79,42 +89,29 @@ interface ExportOptions {
 | `groups:read` | プライベートチャンネル情報取得 |
 | `users:read` | ユーザーIDを名前に解決 |
 
-## 出力形式
+## 出力形式・使用例
 
-### Markdown（デフォルト）
-```markdown
-# #general
+README.mdを参照。
 
-## 2026-02-02
+## Rate Limit回避のベストプラクティス
 
-### 09:15 @username
-メッセージテキスト
+1. **初回セットアップ** - `--list-channels`と`--prefetch-users`を事前実行
+2. **チャンネルIDを直接指定** - `--channel C01234567`形式を使用
+3. **キャッシュファイル** - `.cache/`に保存される
+   - `channels.json` - チャンネル名→ID（conversations.list回避）
+   - `users.json` - ユーザーID→表示名（users.list回避）
 
-> **09:20 @replier**
-> スレッド返信テキスト
-```
+### Slack API Rate Limit Tier
 
-### CSV
-```csv
-timestamp,channel,user,text,thread_ts,reply_count
-2026-02-02T09:15:00.000Z,general,username,メッセージテキスト,,0
-```
+| Tier | 制限 | 主なAPI |
+|------|------|---------|
+| Tier 2 | 20+/分 | `conversations.list`, `users.list` |
+| Tier 3 | 50+/分 | `conversations.history`, `conversations.replies` |
+| Tier 4 | 100+/分 | `users.info` |
 
-## 使用例
-
-```bash
-# 全履歴をMarkdownでエクスポート
-npm run dev -- --channel general
-
-# 日付範囲指定
-npm run dev -- --channel general --from 2026-01-01 --to 2026-01-31
-
-# CSVでエクスポート
-npm run dev -- --channel general --format csv
-
-# 出力先ディレクトリ指定
-npm run dev -- --channel general --output ./my-exports
-```
+チャンネル名で指定すると`conversations.list`（Tier 2）が呼び出され、rate limitに達する可能性がある。
+ユーザー数が多い場合、`users.list`（Tier 2）もrate limitに達する可能性がある。
+キャッシュを事前作成することで、2回目以降はTier 2 APIの呼び出しを完全に回避可能。
 
 ## 開発
 
