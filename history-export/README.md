@@ -126,4 +126,4 @@ timestamp,channel,user,text,thread_ts,reply_count
 
 ## ライセンス
 
-Private
+MIT

@@ -258,7 +258,7 @@ This compiles TypeScript files from `src/` to JavaScript in `dist/`.
 
 ## License
 
-ISC
+MIT
 
 ## Additional Resources
 
